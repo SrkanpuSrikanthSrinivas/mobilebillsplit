@@ -1,0 +1,17 @@
+{
+  "name": "att-family-split",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.4",
+    "next": "14.2.5",
+    "pdfjs-dist": "4.0.379",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
