@@ -7,25 +7,14 @@ const money = (n) => { const v = isFinite(n) ? n : 0; return (v < 0 ? "-" : "") 
 const monthLabel = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" }); };
 const monthShort = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" }) + " '" + String(y).slice(2); };
 
-export default function Dashboard() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function Dashboard({ initialData = { bills: {}, payments: {} }, dbError = null }) {
+  const [data, setData] = useState(initialData);
+  const [loading] = useState(false);
   const [view, setView] = useState("month");
   const [month, setMonth] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/data", { cache: "no-store" });
-      if (res.ok) setData(await res.json());
-      else setMsg({ type: "err", text: "Could not load data." });
-    } catch (e) { setMsg({ type: "err", text: "Network error." }); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
 
   const monthKeys = useMemo(() => (data ? Object.keys(data.bills).sort() : []), [data]);
   useEffect(() => {
@@ -43,8 +32,8 @@ export default function Dashboard() {
       if (!res.ok) setMsg({ type: "err", text: j.error || `Upload failed (${res.status}).` });
       else {
         setMsg({ type: j.reconciles ? "ok" : "warn",
-          text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. ${j.reconciles ? "Reconciles ✓" : "⚠ line sum " + money(j.sumOfLines) + " ≠ bill total"}` });
-        await load(); setMonth(j.month); setView("month");
+          text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. Refreshing…` });
+        setTimeout(() => window.location.reload(), 800);
       }
     } catch (e) { setMsg({ type: "err", text: "Upload error: " + e.message }); }
     setBusy(false);
@@ -96,6 +85,7 @@ export default function Dashboard() {
           {busy && <span className="muted sm">Parsing…</span>}
         </div>
       </section>
+      {dbError && <div className="msg err">Database read failed on the server: {dbError}</div>}
       {msg && <div className={"msg " + msg.type}>{msg.text}</div>}
 
       {monthKeys.length === 0 ? (
