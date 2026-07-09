@@ -1,19 +1,11 @@
 # AT&T Family Split
 
-Upload each month's AT&T Mobility PDF and it automatically parses every line,
-groups people into families, tracks who's paid, and gives each family a
-read-only link — no manual math.
+One shared link for everyone. Upload a month's AT&T Mobility PDF and it parses
+every line automatically, groups people into families, shows each family's total,
+tracks who's paid, and gives an all-months summary — no manual math, no logins.
 
 Tested against six real bills: month, account total, and every per-line total
 extract correctly and reconcile to the penny.
-
-## How it works
-
-- **Organizer** opens the site, enters the organizer key, and uploads the bill PDF.
-- The server parses it (`lib/parseAttBill.mjs`), stores per-line totals in Neon Postgres.
-- Families are grouped per `lib/config.js`; the account holder's family shows as "covered."
-- **Families** open a read-only link (`/share/<SHARE_TOKEN>`) and see their totals,
-  the all-months summary, and who's paid.
 
 ## Deploy (Vercel + Neon)
 
@@ -23,24 +15,21 @@ extract correctly and reconcile to the penny.
 2. **Push this folder to GitHub** (a new repo).
 
 3. **Import the repo into Vercel** (https://vercel.com/new). Framework: Next.js
-   (auto-detected). Before deploying, add three Environment Variables:
+   (auto-detected). Add ONE environment variable:
 
    | Name | Value |
    |------|-------|
    | `DATABASE_URL` | your Neon connection string |
-   | `ADMIN_KEY` | a long random string (only you know it) |
-   | `SHARE_TOKEN` | a different long random string (goes in the family link) |
 
 4. **Deploy.** Tables are created automatically on first use.
 
-5. **Use it:**
-   - Organizer dashboard: `https://your-app.vercel.app/` → enter `ADMIN_KEY` → upload bills.
-   - Family link to share: `https://your-app.vercel.app/share/<SHARE_TOKEN>` (read-only).
+5. **Share the site URL** (e.g. `https://your-app.vercel.app`) with everyone.
+   Anyone with the link can upload bills, view all families, and mark payments.
 
 ## Run locally
 
 ```bash
-cp .env.example .env      # fill in the three values
+cp .env.example .env      # paste your DATABASE_URL
 npm install
 npm run dev               # http://localhost:3000
 ```
@@ -52,13 +41,20 @@ Edit `lib/config.js`:
 - `FAMILIES` — group lines; mark the account holder's family `holder: true`.
 - `PAYER` — the name shown as the Zelle recipient.
 
-No database migration needed — grouping is applied at display time from the
-stored per-line totals.
+Grouping is applied at display time from the stored per-line totals, so no
+database change is needed when you edit this.
 
-## Notes
+## How the parsing works
 
-- The parser keys everything off the phone number on each line, so it keeps
-  working month to month even as amounts change.
-- If a future bill's sum doesn't match AT&T's printed total, the month view
-  flags it ("check") so you can eyeball that bill.
-- Upload runs on the Node.js serverless runtime (set in `app/api/upload/route.js`).
+`lib/parseAttBill.mjs` uses **unpdf** (a serverless-safe PDF text extractor) to
+pull, from each bill: the issue month, the account total, and every line's
+"Total for <number>" amount. It keys off the phone number, so it keeps working
+month to month as amounts change. If a bill's line-sum ever doesn't match AT&T's
+printed total, the month view flags it with "check".
+
+## Notes on access
+
+There's no password — anyone with the URL can view and edit. That's intentional
+for a small family group. If you later want it locked down, the simplest option
+is Vercel's built-in password protection (Project → Settings → Deployment
+Protection) or Vercel Authentication.

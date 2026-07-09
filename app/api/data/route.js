@@ -2,15 +2,9 @@ import { NextResponse } from "next/server";
 import { getAllData } from "../../../lib/db.mjs";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function ok(req) {
-  const k = req.headers.get("x-admin-key");
-  const t = req.headers.get("x-share-token");
-  return k === process.env.ADMIN_KEY || t === process.env.SHARE_TOKEN;
-}
-
-export async function GET(req) {
-  if (!ok(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET() {
   const data = await getAllData();
   return NextResponse.json(data);
 }

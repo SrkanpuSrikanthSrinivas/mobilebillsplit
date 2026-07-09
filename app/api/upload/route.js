@@ -5,13 +5,7 @@ import { upsertBill } from "../../../lib/db.mjs";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-function authed(req) {
-  return req.headers.get("x-admin-key") === process.env.ADMIN_KEY;
-}
-
 export async function POST(req) {
-  if (!authed(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const form = await req.formData();
   const file = form.get("file");
   if (!file || typeof file === "string") {
@@ -28,12 +22,11 @@ export async function POST(req) {
 
   if (!parsed.month || parsed.accountTotal == null || parsed.lines.length === 0) {
     return NextResponse.json(
-      { error: "This doesn't look like an AT&T Mobility bill (no month/total/lines found)." },
+      { error: "This doesn't look like an AT&T Mobility bill (couldn't find the month, total, or line items)." },
       { status: 422 }
     );
   }
 
-  // store per-line totals keyed by full line number
   const lines = {};
   for (const l of parsed.lines) lines[l.line] = l.total;
 

@@ -7,73 +7,61 @@ const money = (n) => { const v = isFinite(n) ? n : 0; return (v < 0 ? "-" : "") 
 const monthLabel = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" }); };
 const monthShort = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" }) + " '" + String(y).slice(2); };
 
-export default function Dashboard({ readOnly = false, initialData = null, shareToken = null }) {
-  const [data, setData] = useState(initialData);
-  const [loading, setLoading] = useState(!initialData);
+export default function Dashboard() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [view, setView] = useState("month");
   const [month, setMonth] = useState(null);
-  const [adminKey, setAdminKey] = useState("");
-  const [keyReady, setKeyReady] = useState(readOnly);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
 
-  useEffect(() => {
-    if (readOnly) return;
-    const saved = typeof window !== "undefined" ? localStorage.getItem("att_admin_key") : "";
-    if (saved) { setAdminKey(saved); setKeyReady(true); }
-  }, [readOnly]);
-
-  const headers = () => (readOnly ? { "x-share-token": shareToken || "" } : { "x-admin-key": adminKey });
-
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/data", { headers: headers() });
+      const res = await fetch("/api/data", { cache: "no-store" });
       if (res.ok) setData(await res.json());
-      else setMsg({ type: "err", text: "Could not load data (check your key)." });
+      else setMsg({ type: "err", text: "Could not load data." });
     } catch (e) { setMsg({ type: "err", text: "Network error." }); }
     setLoading(false);
   };
-
-  useEffect(() => { if (keyReady && !initialData) load(); /* eslint-disable-next-line */ }, [keyReady]);
+  useEffect(() => { load(); }, []);
 
   const monthKeys = useMemo(() => (data ? Object.keys(data.bills).sort() : []), [data]);
   useEffect(() => {
     if (monthKeys.length && (!month || !monthKeys.includes(month))) setMonth(monthKeys[monthKeys.length - 1]);
   }, [monthKeys]); // eslint-disable-line
 
-  const saveKey = () => { localStorage.setItem("att_admin_key", adminKey); setKeyReady(true); };
-
   const upload = async (file) => {
     if (!file) return;
     setBusy(true); setMsg(null);
     try {
       const fd = new FormData(); fd.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", headers: { "x-admin-key": adminKey }, body: fd });
-      const j = await res.json();
-      if (!res.ok) setMsg({ type: "err", text: j.error || "Upload failed." });
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      let j = {};
+      try { j = await res.json(); } catch (_) {}
+      if (!res.ok) setMsg({ type: "err", text: j.error || `Upload failed (${res.status}).` });
       else {
         setMsg({ type: j.reconciles ? "ok" : "warn",
-          text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. ${j.reconciles ? "Reconciles ✓" : "⚠ sum " + money(j.sumOfLines) + " ≠ total"}` });
+          text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. ${j.reconciles ? "Reconciles ✓" : "⚠ line sum " + money(j.sumOfLines) + " ≠ bill total"}` });
         await load(); setMonth(j.month); setView("month");
       }
-    } catch (e) { setMsg({ type: "err", text: "Upload error." }); }
+    } catch (e) { setMsg({ type: "err", text: "Upload error: " + e.message }); }
     setBusy(false);
     if (fileRef.current) fileRef.current.value = "";
   };
 
   const togglePaid = async (familyId, current) => {
-    if (readOnly) return;
     const next = !current;
     setData((d) => ({ ...d, payments: { ...d.payments, [month]: { ...(d.payments[month] || {}), [familyId]: next } } }));
-    await fetch("/api/paid", { method: "POST", headers: { "Content-Type": "application/json", "x-admin-key": adminKey },
-      body: JSON.stringify({ month, familyId, paid: next }) });
+    try {
+      await fetch("/api/paid", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month, familyId, paid: next }) });
+    } catch (e) { setMsg({ type: "err", text: "Couldn't save that change." }); }
   };
 
-  // ---- derived ----
-  const famLines = (f, mk) => (data?.bills[mk]?.lines) || {};
-  const famTotal = (f, mk) => f.lines.reduce((s, ln) => s + num(famLines(f, mk)[ln]), 0);
+  const famLines = (mk) => (data?.bills[mk]?.lines) || {};
+  const famTotal = (f, mk) => f.lines.reduce((s, ln) => s + num(famLines(mk)[ln]), 0);
   const isPaid = (f, mk) => f.holder || !!(data?.payments[mk]?.[f.id]);
   const famAgg = (f) => {
     let total = 0, paid = 0;
@@ -81,22 +69,7 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
     return { total, paid, outstanding: total - paid };
   };
 
-  // ---- gates / empty states ----
-  if (!readOnly && !keyReady) {
-    return (
-      <div className="wrap"><Style />
-        <div className="gate">
-          <h1>AT&amp;T Family Split</h1>
-          <p className="muted">Enter the organizer key to manage bills.</p>
-          <input className="inp" type="password" placeholder="Organizer key" value={adminKey}
-            onChange={(e) => setAdminKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveKey()} />
-          <button className="btn" onClick={saveKey}>Continue</button>
-        </div>
-      </div>
-    );
-  }
   if (loading) return <div className="wrap"><Style /><p className="muted" style={{ padding: 40 }}>Loading…</p></div>;
-
   const cur = month && data?.bills[month];
 
   return (
@@ -104,7 +77,7 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
       <header className="mast">
         <div>
           <div className="brand">AT&amp;T Family Split</div>
-          <div className="sub">{readOnly ? "Family view" : "Organizer"} · pays {PAYER}</div>
+          <div className="sub">Shared dashboard · everyone pays {PAYER}</div>
         </div>
         <div className="seg">
           <button className={view === "month" ? "on" : ""} onClick={() => setView("month")}>Month</button>
@@ -113,23 +86,20 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
       </header>
       <div className="perf" />
 
-      {!readOnly && (
-        <section className="uploadbar">
-          <div>
-            <div className="mini">Upload this month&apos;s AT&amp;T bill (PDF)</div>
-            <div className="muted sm">It parses each line automatically — no manual math.</div>
-          </div>
-          <div className="uprow">
-            <input ref={fileRef} type="file" accept="application/pdf"
-              onChange={(e) => upload(e.target.files?.[0])} disabled={busy} />
-            {busy && <span className="muted sm">Parsing…</span>}
-          </div>
-        </section>
-      )}
+      <section className="uploadbar">
+        <div>
+          <div className="mini">Upload a month&apos;s AT&amp;T bill (PDF)</div>
+          <div className="muted sm">It reads every line automatically — no manual math.</div>
+        </div>
+        <div className="uprow">
+          <input ref={fileRef} type="file" accept="application/pdf" onChange={(e) => upload(e.target.files?.[0])} disabled={busy} />
+          {busy && <span className="muted sm">Parsing…</span>}
+        </div>
+      </section>
       {msg && <div className={"msg " + msg.type}>{msg.text}</div>}
 
       {monthKeys.length === 0 ? (
-        <div className="empty">No bills yet. {readOnly ? "Check back once the organizer uploads one." : "Upload a PDF above to get started."}</div>
+        <div className="empty">No bills yet — upload a PDF above to get started.</div>
       ) : view === "month" ? (
         <>
           <div className="monthpick">
@@ -151,8 +121,7 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
                   <div className="fam-right">
                     <span className="fam-total">{money(total)}</span>
                     {f.holder ? <span className="covered">covered</span>
-                      : readOnly ? <span className={"ro " + (paid ? "y" : "n")}>{paid ? "paid ✓" : "due"}</span>
-                        : <button className={"chk" + (paid ? " on" : "")} onClick={() => togglePaid(f.id, paid)}>{paid ? "✓ paid" : "mark paid"}</button>}
+                      : <button className={"chk" + (paid ? " on" : "")} onClick={() => togglePaid(f.id, paid)}>{paid ? "✓ paid" : "mark paid"}</button>}
                   </div>
                 </div>
                 <div className="members">
@@ -198,10 +167,7 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
               </tbody>
               <tfoot><tr>
                 <td className="l">All bills</td>
-                {monthKeys.map((k) => {
-                  const t = FAMILIES.reduce((s, f) => s + famTotal(f, k), 0);
-                  return <td key={k}>{money(t)}</td>;
-                })}
+                {monthKeys.map((k) => <td key={k}>{money(FAMILIES.reduce((s, f) => s + famTotal(f, k), 0))}</td>)}
                 <td className="tot strong">{money(FAMILIES.reduce((s, f) => s + famAgg(f).total, 0))}</td>
                 <td className="tot owe">{money(FAMILIES.reduce((s, f) => s + famAgg(f).outstanding, 0))}</td>
               </tr></tfoot>
@@ -216,11 +182,9 @@ export default function Dashboard({ readOnly = false, initialData = null, shareT
 
 function ReconStrip({ data, month }) {
   const bill = data.bills[month];
-  const sum = FAMILIES.reduce((s, f) => s + f.lines.reduce((a, ln) => a + num(bill.lines[ln]), 0), 0);
-  const collected = FAMILIES.reduce((s, f) => {
-    const paid = f.holder || !!(data.payments[month]?.[f.id]);
-    return s + (paid ? f.lines.reduce((a, ln) => a + num(bill.lines[ln]), 0) : 0);
-  }, 0);
+  const t = (f) => f.lines.reduce((a, ln) => a + num(bill.lines[ln]), 0);
+  const sum = FAMILIES.reduce((s, f) => s + t(f), 0);
+  const collected = FAMILIES.reduce((s, f) => s + ((f.holder || !!(data.payments[month]?.[f.id])) ? t(f) : 0), 0);
   const outstanding = sum - collected;
   const diff = sum - num(bill.accountTotal);
   const done = Math.abs(outstanding) < 0.005;
@@ -229,17 +193,13 @@ function ReconStrip({ data, month }) {
       <div className="rc"><span className="mini">Bill total</span><span className="val">{money(sum)}</span></div>
       <div className="rc"><span className="mini">Collected</span><span className="val pos">{money(collected)}</span></div>
       <div className="rc"><span className="mini">Still owed</span><span className={"val" + (outstanding > 0.005 ? " neg" : "")}>{money(outstanding)}</span></div>
-      <div className="rc"><span className="mini">AT&amp;T total</span>
-        <span className="val">{money(num(bill.accountTotal))}</span>
-        <span className={"flag " + (Math.abs(diff) < 0.01 ? "ok" : "bad")}>{Math.abs(diff) < 0.01 ? "matches" : "check"}</span>
-      </div>
+      <div className="rc"><span className="mini">AT&amp;T total</span><span className="val">{money(num(bill.accountTotal))}</span>
+        <span className={"flag " + (Math.abs(diff) < 0.01 ? "ok" : "bad")}>{Math.abs(diff) < 0.01 ? "matches" : "check"}</span></div>
     </section>
   );
 }
 
-function Style() {
-  return <style>{CSS}</style>;
-}
+function Style() { return <style>{CSS}</style>; }
 
 const CSS = `
 .wrap{--ink:#1b2430;--paper:#eceff4;--surface:#fff;--line:#dbe1ea;--muted:#6c7787;--accent:#2f56d6;--accent-soft:#eaefff;--pos:#157347;--neg:#c22f3d;--hold:#7a5cff;
@@ -248,11 +208,8 @@ const CSS = `
 .wrap *{box-sizing:border-box;}
 .muted{color:var(--muted);} .sm{font-size:12px;}
 .mini{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600;}
-.gate{max-width:340px;margin:12vh auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:26px;display:flex;flex-direction:column;gap:12px;}
-.gate h1{margin:0;font-size:20px;}
-.inp,.sel{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 11px;font-size:14px;color:var(--ink);outline:none;font-family:inherit;}
-.inp:focus,.sel:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
-.btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+.sel{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 11px;font-size:14px;color:var(--ink);outline:none;font-family:inherit;min-width:180px;cursor:pointer;}
+.sel:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .mast{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}
 .brand{font-size:24px;font-weight:800;letter-spacing:-.5px;} .sub{font-size:13px;color:var(--muted);margin-top:2px;}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface);}
@@ -264,7 +221,7 @@ const CSS = `
 .msg{border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;margin-bottom:14px;}
 .msg.ok{background:#e6f6ec;color:var(--pos);} .msg.warn{background:#fdf3e2;color:#a56b16;} .msg.err{background:#fdeaea;color:var(--neg);}
 .empty{color:var(--muted);font-size:14px;padding:30px;text-align:center;border:1px dashed var(--line);border-radius:12px;background:var(--surface);}
-.monthpick{margin-bottom:14px;} .sel{min-width:180px;cursor:pointer;}
+.monthpick{margin-bottom:14px;}
 .fam{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
 .fam.holder{border-left:4px solid var(--hold);}
 .fam.ispaid{border-left:4px solid var(--pos);background:linear-gradient(90deg,rgba(21,115,71,.04),var(--surface) 40%);}
@@ -276,7 +233,6 @@ const CSS = `
 .fam-right{display:flex;align-items:center;gap:14px;}
 .fam-total{font-size:22px;font-weight:800;font-family:var(--mono);font-variant-numeric:tabular-nums;}
 .covered{font-size:12px;font-weight:700;color:var(--hold);text-transform:uppercase;letter-spacing:.5px;}
-.ro{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;} .ro.y{color:var(--pos);} .ro.n{color:var(--neg);}
 .chk{border:2px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--muted);white-space:nowrap;}
 .chk.on{background:var(--pos);border-color:var(--pos);color:#fff;}
 .members{padding-top:6px;}
