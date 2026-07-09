@@ -11,7 +11,10 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
   const [data, setData] = useState(initialData);
   const [loading] = useState(false);
   const [view, setView] = useState("month");
-  const [month, setMonth] = useState(null);
+  const [month, setMonth] = useState(() => {
+    const ks = Object.keys(initialData?.bills || {}).sort();
+    return ks[ks.length - 1] || null;
+  });
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -90,7 +93,7 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
 
       {monthKeys.length === 0 ? (
         <div className="empty">No bills yet — upload a PDF above to get started.</div>
-      ) : view === "month" ? (
+      ) : view === "month" && cur ? (
         <>
           <div className="monthpick">
             <select className="sel" value={month || ""} onChange={(e) => setMonth(e.target.value)}>
@@ -119,7 +122,7 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
                     <div className="mrow" key={ln}>
                       <span className="nm">{PEOPLE[ln]?.name || ln}</span>
                       <span className="ln">…{ln.slice(-4)}</span>
-                      <span className="mamt">{money(num(cur.lines[ln]))}</span>
+                      <span className="mamt">{money(num(cur?.lines?.[ln]))}</span>
                     </div>
                   ))}
                 </div>
@@ -172,6 +175,7 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
 
 function ReconStrip({ data, month }) {
   const bill = data.bills[month];
+  if (!bill) return null;
   const t = (f) => f.lines.reduce((a, ln) => a + num(bill.lines[ln]), 0);
   const sum = FAMILIES.reduce((s, f) => s + t(f), 0);
   const collected = FAMILIES.reduce((s, f) => s + ((f.holder || !!(data.payments[month]?.[f.id])) ? t(f) : 0), 0);
