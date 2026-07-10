@@ -29,7 +29,7 @@ export async function POST(req) {
   }
 
   const lines = {};
-  for (const l of parsed.lines) lines[l.line] = l.total;
+  for (const l of parsed.lines) lines[l.line] = { t: l.total, d: l.byod || 0 };
 
   // Write to the DB, and confirm the row is actually readable afterward.
   try {

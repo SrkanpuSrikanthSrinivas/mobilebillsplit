@@ -7,9 +7,21 @@ const money = (n) => { const v = isFinite(n) ? n : 0; return (v < 0 ? "-" : "") 
 const monthLabel = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" }); };
 const monthShort = (k) => { const [y, m] = k.split("-").map(Number); return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" }) + " '" + String(y).slice(2); };
 
+// Pull each line's total (t) and own-device discount (d), then redistribute the
+// pooled discount evenly across every line: each line gets back its own discount
+// and instead pays an equal share of the total pool.
+function computeAdjusted(bill) {
+  const entries = Object.entries(bill?.lines || {}); // [line, {t,d}]
+  const count = entries.length || 1;
+  const pooled = entries.reduce((s, [, v]) => s + num(v?.d), 0);
+  const share = pooled / count;
+  const perLine = {};
+  for (const [ln, v] of entries) perLine[ln] = num(v?.t) + num(v?.d) - share;
+  return { perLine, pooled, share, count };
+}
+
 export default function Dashboard({ initialData = { bills: {}, payments: {} }, dbError = null }) {
   const [data, setData] = useState(initialData);
-  const [loading] = useState(false);
   const [view, setView] = useState("month");
   const [month, setMonth] = useState(() => {
     const ks = Object.keys(initialData?.bills || {}).sort();
@@ -24,18 +36,22 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
     if (monthKeys.length && (!month || !monthKeys.includes(month))) setMonth(monthKeys[monthKeys.length - 1]);
   }, [monthKeys]); // eslint-disable-line
 
+  const adj = useMemo(() => {
+    const m = {};
+    if (data?.bills) for (const mk of Object.keys(data.bills)) m[mk] = computeAdjusted(data.bills[mk]);
+    return m;
+  }, [data]);
+
   const upload = async (file) => {
     if (!file) return;
     setBusy(true); setMsg(null);
     try {
       const fd = new FormData(); fd.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
-      let j = {};
-      try { j = await res.json(); } catch (_) {}
+      let j = {}; try { j = await res.json(); } catch (_) {}
       if (!res.ok) setMsg({ type: "err", text: j.error || `Upload failed (${res.status}).` });
       else {
-        setMsg({ type: j.reconciles ? "ok" : "warn",
-          text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. Refreshing…` });
+        setMsg({ type: j.reconciles ? "ok" : "warn", text: `${monthLabel(j.month)} added — total ${money(j.accountTotal)}, ${j.lineCount} lines. Refreshing…` });
         setTimeout(() => window.location.reload(), 800);
       }
     } catch (e) { setMsg({ type: "err", text: "Upload error: " + e.message }); }
@@ -47,22 +63,20 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
     const next = !current;
     setData((d) => ({ ...d, payments: { ...d.payments, [month]: { ...(d.payments[month] || {}), [familyId]: next } } }));
     try {
-      await fetch("/api/paid", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, familyId, paid: next }) });
+      await fetch("/api/paid", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month, familyId, paid: next }) });
     } catch (e) { setMsg({ type: "err", text: "Couldn't save that change." }); }
   };
 
-  const famLines = (mk) => (data?.bills[mk]?.lines) || {};
-  const famTotal = (f, mk) => f.lines.reduce((s, ln) => s + num(famLines(mk)[ln]), 0);
-  const isPaid = (f, mk) => f.holder || !!(data?.payments[mk]?.[f.id]);
+  const famTotal = (f, mk) => f.lines.reduce((s, ln) => s + num(adj[mk]?.perLine?.[ln]), 0);
+  const isPaid = (f, mk) => f.holder || !!(data?.payments?.[mk]?.[f.id]);
   const famAgg = (f) => {
     let total = 0, paid = 0;
     monthKeys.forEach((mk) => { const t = famTotal(f, mk); total += t; if (isPaid(f, mk)) paid += t; });
     return { total, paid, outstanding: total - paid };
   };
 
-  if (loading) return <div className="wrap"><Style /><p className="muted" style={{ padding: 40 }}>Loading…</p></div>;
-  const cur = month && data?.bills[month];
+  const cur = month && data?.bills?.[month];
+  const curAdj = month && adj[month];
 
   return (
     <div className="wrap"><Style />
@@ -101,6 +115,13 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
             </select>
           </div>
 
+          {curAdj && curAdj.pooled > 0 && (
+            <div className="note">
+              Own-device discount of <b>{money(curAdj.pooled)}</b> this month is shared evenly across all {curAdj.count} lines:
+              <b> −{money(curAdj.share)} per line</b>. Amounts below already include this.
+            </div>
+          )}
+
           {FAMILIES.map((f) => {
             const total = famTotal(f, month);
             const paid = isPaid(f, month);
@@ -118,21 +139,25 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
                   </div>
                 </div>
                 <div className="members">
-                  {f.lines.map((ln) => (
-                    <div className="mrow" key={ln}>
-                      <span className="nm">{PEOPLE[ln]?.name || ln}</span>
-                      <span className="ln">…{ln.slice(-4)}</span>
-                      <span className="mamt">{money(num(cur?.lines?.[ln]))}</span>
-                    </div>
-                  ))}
+                  {f.lines.map((ln) => {
+                    const raw = cur.lines?.[ln];
+                    const hasDisc = num(raw?.d) > 0;
+                    return (
+                      <div className="mrow" key={ln}>
+                        <span className="nm">{PEOPLE[ln]?.name || ln}{hasDisc && <span className="disc">own-device</span>}</span>
+                        <span className="ln">…{ln.slice(-4)}</span>
+                        <span className="mamt">{money(num(curAdj?.perLine?.[ln]))}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </section>
             );
           })}
 
-          <ReconStrip data={data} month={month} />
+          <ReconStrip data={data} adj={adj} month={month} />
         </>
-      ) : (
+      ) : view === "all" ? (
         <section className="card">
           <div className="card-head"><h2>All months</h2><span className="tag">{monthKeys.length} bills</span></div>
           <div className="scroll">
@@ -166,17 +191,20 @@ export default function Dashboard({ initialData = { bills: {}, payments: {} }, d
               </tr></tfoot>
             </table>
           </div>
-          <p className="muted sm" style={{ marginTop: 12 }}>Green cells are months a family has paid. “Owed” is what each family still needs to send {PAYER}.</p>
+          <p className="muted sm" style={{ marginTop: 12 }}>Own-device discounts are shared evenly across all lines each month, so totals already reflect that. Green cells are months a family has paid.</p>
         </section>
+      ) : (
+        <div className="empty">Loading…</div>
       )}
     </div>
   );
 }
 
-function ReconStrip({ data, month }) {
+function ReconStrip({ data, adj, month }) {
   const bill = data.bills[month];
   if (!bill) return null;
-  const t = (f) => f.lines.reduce((a, ln) => a + num(bill.lines[ln]), 0);
+  const per = adj[month]?.perLine || {};
+  const t = (f) => f.lines.reduce((a, ln) => a + num(per[ln]), 0);
   const sum = FAMILIES.reduce((s, f) => s + t(f), 0);
   const collected = FAMILIES.reduce((s, f) => s + ((f.holder || !!(data.payments[month]?.[f.id])) ? t(f) : 0), 0);
   const outstanding = sum - collected;
@@ -215,7 +243,9 @@ const CSS = `
 .msg{border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;margin-bottom:14px;}
 .msg.ok{background:#e6f6ec;color:var(--pos);} .msg.warn{background:#fdf3e2;color:#a56b16;} .msg.err{background:#fdeaea;color:var(--neg);}
 .empty{color:var(--muted);font-size:14px;padding:30px;text-align:center;border:1px dashed var(--line);border-radius:12px;background:var(--surface);}
-.monthpick{margin-bottom:14px;}
+.monthpick{margin-bottom:12px;}
+.note{background:#eef2ff;border:1px solid #d7e0ff;color:#33407a;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px;line-height:1.5;}
+.note b{color:#25306b;}
 .fam{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
 .fam.holder{border-left:4px solid var(--hold);}
 .fam.ispaid{border-left:4px solid var(--pos);background:linear-gradient(90deg,rgba(21,115,71,.04),var(--surface) 40%);}
@@ -232,7 +262,8 @@ const CSS = `
 .members{padding-top:6px;}
 .mrow{display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line);}
 .mrow:last-child{border-bottom:none;}
-.nm{font-size:13.5px;font-weight:600;flex:1;} .ln{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.nm{font-size:13.5px;font-weight:600;flex:1;display:flex;align-items:center;gap:8px;} .ln{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.disc{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:10px;}
 .mamt{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:700;font-size:14px;width:90px;text-align:right;}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px;}
 .card-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px;}
