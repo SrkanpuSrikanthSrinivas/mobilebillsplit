@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseAttBill } from "../../../lib/parseAttBill.mjs";
+import { parseTmobileBill } from "../../../lib/parseTmobileBill.mjs";
 import { upsertBill, getAllData } from "../../../lib/db.mjs";
 
 export const runtime = "nodejs";
@@ -16,28 +16,24 @@ export async function POST(req) {
 
   let parsed;
   try {
-    parsed = await parseAttBill(buf);
+    parsed = await parseTmobileBill(buf);
   } catch (e) {
     return NextResponse.json({ error: "Could not read this PDF: " + e.message }, { status: 422 });
   }
 
-  if (!parsed.month || parsed.accountTotal == null || parsed.lines.length === 0) {
+  if (!parsed.month || parsed.plansTotal == null || parsed.billTotal == null || parsed.lineCount === 0) {
     return NextResponse.json(
-      { error: "This doesn't look like an AT&T Mobility bill (couldn't find the month, total, or line items)." },
+      { error: "This doesn't look like a T-Mobile bill (couldn't find the month, totals, or line items)." },
       { status: 422 }
     );
   }
 
-  const lines = {};
-  for (const l of parsed.lines) lines[l.line] = { t: l.total, d: l.byod || 0 };
-
-  // Write to the DB, and confirm the row is actually readable afterward.
   try {
-    await upsertBill({ month: parsed.month, account: parsed.account, accountTotal: parsed.accountTotal, lines });
+    await upsertBill(parsed);
     const check = await getAllData();
     if (!check.bills[parsed.month]) {
       return NextResponse.json(
-        { error: "Parsed OK but the saved bill wasn't found on read-back — the app is likely reading a different database than it wrote to. Check DATABASE_URL." },
+        { error: "Parsed OK but the saved bill wasn't found on read-back — the app may be reading a different database than it wrote to. Check DATABASE_URL." },
         { status: 500 }
       );
     }
@@ -47,10 +43,12 @@ export async function POST(req) {
 
   return NextResponse.json({
     month: parsed.month,
-    accountTotal: parsed.accountTotal,
+    plansTotal: parsed.plansTotal,
+    billTotal: parsed.billTotal,
+    netflix: parsed.netflix,
+    lineCount: parsed.lineCount,
+    creditsFound: (parsed.credits || []).length,
     reconciles: parsed.reconciles,
-    sumOfLines: parsed.sumOfLines,
-    lineCount: parsed.lines.length,
     stored: true,
   });
 }

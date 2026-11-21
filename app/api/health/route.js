@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAllData } from "../../../lib/db.mjs";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
 export async function GET() {
   let dbHost = "unknown";
   try { dbHost = new URL(process.env.DATABASE_URL).host; } catch (e) {}

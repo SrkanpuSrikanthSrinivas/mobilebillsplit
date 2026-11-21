@@ -1,60 +1,40 @@
-# AT&T Family Split
+# Family Mobile Split (T-Mobile)
 
-One shared link for everyone. Upload a month's AT&T Mobility PDF and it parses
-every line automatically, groups people into families, shows each family's total,
-tracks who's paid, and gives an all-months summary — no manual math, no logins.
+One shared link. Upload a month's T-Mobile bill (PDF) and it parses every line,
+splits fairly, tracks who's paid, and shows an all-months summary.
 
-Tested against six real bills: month, account total, and every per-line total
-extract correctly and reconcile to the penny.
+**Split rules**
+- **Netflix** — a fixed amount (default $8.99, set in `lib/config.js`) is **deducted
+  from the plan pool first**, then charged to the account holder, so only the holder
+  bears it and everyone else's plan share drops.
+- **Plan** — the remaining plan cost is split **equally across all 8 lines** (T-Mobile's
+  uneven per-line prices are just how it spreads account discounts).
+- **Device** — each person pays their own installment **net of their own promo
+  credit**; never pooled. Negative = money back that month.
+- **Usage** — one-time usage stays on the line that rang it up.
+- **Account credits** — T-Mobile's account-level "Credits & adjustments" are detected
+  automatically and shown with a per-credit **assign-to-person** dropdown. An assigned
+  credit comes off that person's total; unassigned credits are flagged and not applied.
+
+Verified against the Aug–Nov 2026 bills: every month's charges reconcile to the total due.
 
 ## Deploy (Vercel + Neon)
+1. Create a Neon Postgres DB at https://neon.tech and copy the **pooled** connection
+   string (host contains `-pooler`).
+2. Push this folder to a GitHub repo.
+3. Import it at https://vercel.com/new (Next.js auto-detected). Add one env var:
+   `DATABASE_URL` = your Neon string (Production environment).
+4. Deploy. Tables are created on first use. Share the site URL with everyone — the
+   link is open: anyone can upload bills, view all families, and mark payments.
 
-1. **Create a Neon database** at https://neon.tech → copy the connection string
-   (looks like `postgres://…@ep-….neon.tech/neondb?sslmode=require`).
+## Edit families / people
+`lib/config.js` — `PEOPLE` (10-digit phone → name), `FAMILIES` (grouping + which
+family is `holder`), `HOLDER`/`PAYER` (account holder = Netflix + collector).
 
-2. **Push this folder to GitHub** (a new repo).
-
-3. **Import the repo into Vercel** (https://vercel.com/new). Framework: Next.js
-   (auto-detected). Add ONE environment variable:
-
-   | Name | Value |
-   |------|-------|
-   | `DATABASE_URL` | your Neon connection string |
-
-4. **Deploy.** Tables are created automatically on first use.
-
-5. **Share the site URL** (e.g. `https://your-app.vercel.app`) with everyone.
-   Anyone with the link can upload bills, view all families, and mark payments.
-
-## Run locally
-
-```bash
-cp .env.example .env      # paste your DATABASE_URL
-npm install
-npm run dev               # http://localhost:3000
-```
-
-## Changing families / people
-
-Edit `lib/config.js`:
-- `PEOPLE` — line number (10 digits, no dots) → name.
-- `FAMILIES` — group lines; mark the account holder's family `holder: true`.
-- `PAYER` — the name shown as the Zelle recipient.
-
-Grouping is applied at display time from the stored per-line totals, so no
-database change is needed when you edit this.
-
-## How the parsing works
-
-`lib/parseAttBill.mjs` uses **unpdf** (a serverless-safe PDF text extractor) to
-pull, from each bill: the issue month, the account total, and every line's
-"Total for <number>" amount. It keys off the phone number, so it keeps working
-month to month as amounts change. If a bill's line-sum ever doesn't match AT&T's
-printed total, the month view flags it with "check".
-
-## Notes on access
-
-There's no password — anyone with the URL can view and edit. That's intentional
-for a small family group. If you later want it locked down, the simplest option
-is Vercel's built-in password protection (Project → Settings → Deployment
-Protection) or Vercel Authentication.
+## How parsing works
+`lib/parseTmobileBill.mjs` (uses **unpdf**, serverless-safe) reads each line's Plans
+and Total from the bill summary; a line's personal charge = Total − Plans (its device
+net + usage). Plan total and bill total come from the Totals row; usage is phone-tagged;
+Netflix's net charge is detected and assigned to the holder. Keyed by phone number, so
+it keeps working as amounts change month to month. If a bill's line sums ever differ
+from the printed total, the month view flags "check".

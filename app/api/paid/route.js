@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { setPaid } from "../../../lib/db.mjs";
-
 export const runtime = "nodejs";
-
+export const dynamic = "force-dynamic";
 export async function POST(req) {
   const { month, familyId, paid } = await req.json();
   if (!month || !familyId) return NextResponse.json({ error: "Bad request" }, { status: 400 });
