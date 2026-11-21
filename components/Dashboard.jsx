@@ -37,16 +37,25 @@ function compute(bill, assign = {}) {
   owed[NETFLIX.to] = r(owed[NETFLIX.to] + nflx);          // Netflix back onto holder
   const chargesSum = r(Object.values(owed).reduce((s, v) => s + v, 0)); // == billTotal
   // account credits -> assigned people
-  const creditApplied = {}; let creditsAssigned = 0, creditsUnassigned = 0;
+  const creditApplied = {}; let creditsApplied = 0;
   for (const c of (bill.credits || [])) {
     const to = assign[c.id];
-    if (to && PEOPLE[to]) {
+    if (to === "__skip__") {
+      // explicitly not applied
+    } else if (to && to !== "__split__" && PEOPLE[to]) {
       owed[to] = r(owed[to] - c.amount);
       creditApplied[to] = r((creditApplied[to] || 0) + c.amount);
-      creditsAssigned = r(creditsAssigned + c.amount);
-    } else creditsUnassigned = r(creditsUnassigned + c.amount);
+      creditsApplied = r(creditsApplied + c.amount);
+    } else {
+      // default: split the credit equally across all lines
+      const sh = r(c.amount / N);
+      for (const pid in PEOPLE) { owed[pid] = r(owed[pid] - sh); creditApplied[pid] = r((creditApplied[pid] || 0) + sh); }
+      const resid = r(c.amount - sh * N);
+      owed[HOLDER] = r(owed[HOLDER] - resid); creditApplied[HOLDER] = r((creditApplied[HOLDER] || 0) + resid);
+      creditsApplied = r(creditsApplied + c.amount);
+    }
   }
-  return { share, plan, owed, dev, use, nflx, chargesSum, creditApplied, creditsAssigned, creditsUnassigned, usageTotal, usageSplit: split };
+  return { share, plan, owed, dev, use, nflx, chargesSum, creditApplied, creditsApplied, usageTotal, usageSplit: split };
 }
 
 export default function Dashboard({ initialData = { bills: {}, payments: {}, creditAssign: {} }, dbError = null }) {
@@ -160,18 +169,18 @@ export default function Dashboard({ initialData = { bills: {}, payments: {}, cre
           </div>
 
           {cur.credits && cur.credits.length > 0 && (
-            <section className={"credits" + (c.creditsUnassigned > 0 ? " warn" : "")}>
+            <section className="credits">
               <div className="credits-head">
-                <span className="cr-title">Account credits — assign to the right person</span>
-                {c.creditsUnassigned > 0 && <span className="cr-warn">{money(c.creditsUnassigned)} unassigned</span>}
+                <span className="cr-title">Account credits</span>
               </div>
-              <div className="muted sm" style={{ marginBottom: 10 }}>T-Mobile lists these at the account level with no per-person breakdown. Assign each to whoever it belongs to — it comes off that person's total.</div>
+              <div className="muted sm" style={{ marginBottom: 10 }}>T-Mobile lists these at the account level with no per-person breakdown. By default they're split equally across all 8 — or put one on a single person if it's really theirs.</div>
               {cur.credits.map((cr) => (
                 <div className="cr-row" key={cr.id}>
                   <div><span className="cr-label">{cr.label}</span> <span className="cr-amt">−{money(cr.amount)}</span></div>
-                  <select className="sel sm" value={assignMap[cr.id] || ""} onChange={(e) => assignCredit(cr.id, e.target.value)}>
-                    <option value="">— unassigned —</option>
+                  <select className="sel sm" value={assignMap[cr.id] || "__split__"} onChange={(e) => assignCredit(cr.id, e.target.value)}>
+                    <option value="__split__">Split equally (all 8)</option>
                     {Object.keys(PEOPLE).map((pid) => <option key={pid} value={pid}>{PEOPLE[pid].name}</option>)}
+                    <option value="__skip__">Don't apply</option>
                   </select>
                 </div>
               ))}
@@ -253,11 +262,11 @@ export default function Dashboard({ initialData = { bills: {}, payments: {}, cre
 function ReconStrip({ bill, comp }) {
   const collected = r(FAMILIES.filter(f => !f.holder).reduce((s, f) => s + f.lines.reduce((a, p) => a + comp.owed[p], 0), 0));
   const ok = Math.abs(comp.chargesSum - bill.billTotal) < 0.02;
-  const net = r(comp.chargesSum - comp.creditsAssigned);
+  const net = r(comp.chargesSum - comp.creditsApplied);
   return (
     <section className={"recon" + (ok ? " ok" : "")}>
       <div className="rc"><span className="k">T-Mobile bill</span><span className="v">{money(bill.billTotal)}</span></div>
-      {comp.creditsAssigned > 0 && <div className="rc"><span className="k">Account credits</span><span className="v pos">−{money(comp.creditsAssigned)}</span></div>}
+      {comp.creditsApplied > 0 && <div className="rc"><span className="k">Account credits</span><span className="v pos">−{money(comp.creditsApplied)}</span></div>}
       <div className="rc"><span className="k">Net to collect</span><span className="v">{money(net)}</span></div>
       <div className="rc"><span className="k">{PAYER.split(" ")[0]} collects (2 families)</span><span className="v">{money(collected)}</span></div>
       <span className={"flag " + (ok ? "ok" : "bad")}>{ok ? "bill reconciles ✓" : "check"}</span>
