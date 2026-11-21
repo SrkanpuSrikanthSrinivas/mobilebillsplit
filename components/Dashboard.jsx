@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { PEOPLE, FAMILIES, HOLDER, PAYER, NETFLIX, ONE_TIME } from "../lib/config";
+import { parsePdfInBrowser } from "../lib/clientParse";
 
 const r = (x) => Math.round((Number(x) + 1e-9) * 100) / 100;
 const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
@@ -74,8 +75,15 @@ export default function Dashboard({ initialData = { bills: {}, payments: {}, cre
     if (!file) return;
     setBusy(true); setMsg(null);
     try {
-      const fd = new FormData(); fd.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      // parse in the browser, then send the small JSON result (avoids the 4.5MB upload cap)
+      let parsed;
+      try { parsed = await parsePdfInBrowser(file); }
+      catch (e) { setMsg({ type: "err", text: "Couldn't read this PDF: " + e.message }); setBusy(false); if (fileRef.current) fileRef.current.value = ""; return; }
+      if (!parsed.month || parsed.plansTotal == null || parsed.billTotal == null || !parsed.lineCount) {
+        setMsg({ type: "err", text: "This doesn't look like a T-Mobile bill (couldn't find the month, totals, or lines)." });
+        setBusy(false); if (fileRef.current) fileRef.current.value = ""; return;
+      }
+      const res = await fetch("/api/upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed) });
       let j = {}; try { j = await res.json(); } catch (_) {}
       if (!res.ok) setMsg({ type: "err", text: j.error || `Upload failed (${res.status}).` });
       else {

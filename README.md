@@ -31,6 +31,12 @@ Verified against the Aug–Nov 2026 bills: every month's charges reconcile to th
 `lib/config.js` — `PEOPLE` (10-digit phone → name), `FAMILIES` (grouping + which
 family is `holder`), `HOLDER`/`PAYER` (account holder = Netflix + collector).
 
+## Uploads (why big PDFs work)
+The browser parses the PDF locally (pdf.js from cdnjs) and posts only the small
+extracted result (~1 KB) to `/api/upload`. This sidesteps Vercel's 4.5 MB serverless
+upload limit, so the 6–7 MB detailed bills upload fine. Parsing logic lives in
+`lib/parseLines.mjs` (shared) and is driven in the browser by `lib/clientParse.js`.
+
 ## How parsing works
 `lib/parseTmobileBill.mjs` (uses **unpdf**, serverless-safe) reads each line's Plans
 and Total from the bill summary; a line's personal charge = Total − Plans (its device
